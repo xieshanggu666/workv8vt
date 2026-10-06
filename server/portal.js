@@ -424,25 +424,86 @@ export function rejectSubmission(id, body, actor) {
 }
 
 // 内部为提交补挂/改挂危机（通用线索核实归属后挂接；ops+）
+// 改挂到另一危机时，提交的处置痕迹必须随迁/清理，否则旧危机结案清理与双方复盘统计会串案：
+//   ① 门户锚点时间线（ref_type='ext'：提交/升级/补充/采纳）随提交迁至新危机，旧危机不再承载他案提交的时间线；
+//   ② 已采纳回写的工单属于旧危机（工单不可跨事件随迁）→ 解除回写引用，工单与提交双侧留痕；
+//   ③ 采纳时联动解除的预警留在旧危机（alert_events 维持解除态，无逐条回指无法精确恢复），统计计数不随迁；
+//   ④ 外部协作类通知任务按「危机归属随来源对象」同步改挂（结案联动中止/复盘通知聚合同口径）；
+//   ⑤ 旧危机写「外部反馈改挂」留痕（普通时间线不带锚点，后续改挂不再随迁；已结案事件不回写）。
 export function bindSubmissionCrisis(id, body, actor) {
   const s = q1('SELECT * FROM ext_submissions WHERE id=?', id)
   if (!s) return null
   const crisisId = body?.crisis_id ? +body.crisis_id : null
+  const oldCrisisId = s.crisis_id ?? null
+  if (oldCrisisId === crisisId) return { ok: true, crisisId, unchanged: true } // 归属未变：幂等，不重复写时间线
   if (crisisId) {
     const c = q1('SELECT id,status,title FROM crisis WHERE id=?', crisisId)
     if (!c) return { error: '危机事件不存在' }
     if (c.status === 'closed') return { error: '已结案事件不能挂接外部提交（如需请先回滚结案）' }
   }
   const ts = now()
-  run('UPDATE ext_submissions SET crisis_id=?, updated=? WHERE id=?', crisisId, ts, id)
-  addLog(id, 'bind', crisisId ? `内部补挂危机事件 #${crisisId}` : '解除危机事件挂接', actor.user, 'internal')
-  if (crisisId) {
-    const partner = q1('SELECT name FROM ext_partners WHERE id=?', s.partner_id)
-    addDispatchLikeTimeline(crisisId, s.is_urgent ? '外部反馈升级' : '外部反馈提交',
-      `${PARTNER_KIND[s.kind]}（${partner ? partner.name : '已停用协作方'}）${s.is_urgent ? '紧急' : ''}提交${DOC_ACTION_TEXT[s.doc_type]}「${s.title}」（${s.code}，内部核实后补挂）`,
-      id, ts)
+  const partner = q1('SELECT name FROM ext_partners WHERE id=?', s.partner_id)
+  const who = `${PARTNER_KIND[s.kind]}（${partner ? partner.name : '已停用协作方'}）`
+  const docLabel = DOC_ACTION_TEXT[s.doc_type]
+  const targetText = crisisId ? `改挂至危机 #${crisisId}` : '解除危机挂接（转为通用线索）'
+  let movedTimeline = 0
+  let movedTasks = 0
+  let detachedWoId = null
+  db.exec('BEGIN')
+  try {
+    // ② 采纳回写的工单不属于新归属 → 解除引用（工单留在旧危机，原回写留痕保留并补解除记录）
+    if (s.work_order_id) {
+      const wo = q1('SELECT id,crisis_id FROM work_orders WHERE id=?', s.work_order_id)
+      if (wo && wo.crisis_id !== crisisId) {
+        detachedWoId = wo.id
+        run('UPDATE ext_submissions SET work_order_id=NULL WHERE id=?', id)
+        run('INSERT INTO work_order_logs (wo_id,action,detail,operator,operator_role,time) VALUES (?,?,?,?,?,?)',
+          wo.id, 'ext',
+          `外部协作门户：${who}提交的${docLabel}「${s.title}」（${s.code}）已${targetText}，采纳回写引用随之解除（原回写留痕保留）`,
+          actor.user, actor.role || '', ts)
+      }
+    }
+    // ③ 联动解除的预警留在旧危机（维持解除），统计计数不随迁
+    if (s.resolved_alert_count) run('UPDATE ext_submissions SET resolved_alert_count=0 WHERE id=?', id)
+    run('UPDATE ext_submissions SET crisis_id=?, updated=? WHERE id=?', crisisId, ts, id)
+    // ① 门户锚点时间线随迁（含多次改挂/解挂遗留在其他危机的同提交锚点记录）
+    if (crisisId) {
+      movedTimeline = Number(run("UPDATE crisis_timeline SET crisis_id=? WHERE ref_type='ext' AND ref_id=? AND crisis_id!=?",
+        crisisId, id, crisisId).changes || 0)
+    }
+    // ④ 外部协作通知任务随来源对象改挂（含紧急升级链；结案联动中止与复盘通知统计同口径）
+    movedTasks = Number(run('UPDATE notify_tasks SET crisis_id=? WHERE ext_submission_id=? AND crisis_id IS NOT ?',
+      crisisId, id, crisisId).changes || 0)
+    // ⑤ 旧危机留痕（已结案事件不回写，保证结案档案稳定）
+    if (oldCrisisId) {
+      const oldC = q1('SELECT status FROM crisis WHERE id=?', oldCrisisId)
+      if (oldC && oldC.status !== 'closed') {
+        const bits = [`${who}提交的${docLabel}「${s.title}」（${s.code}）经内部核实${targetText}`]
+        if (movedTimeline) bits.push(`${movedTimeline} 条门户时间线随迁`)
+        if (detachedWoId) bits.push(`采纳回写的工单 #${detachedWoId} 属本事件，引用已解除`)
+        if (s.resolved_alert_count) bits.push(`采纳时联动解除的 ${s.resolved_alert_count} 条预警维持解除（归属本事件，计数不随迁）`)
+        addTimeline(oldCrisisId, '外部反馈改挂', bits.join('；'), ts)
+      }
+    }
+    addLog(id, 'bind',
+      (crisisId
+        ? (oldCrisisId ? `内部将提交从危机 #${oldCrisisId} 改挂至危机 #${crisisId}` : `内部补挂危机事件 #${crisisId}`)
+        : `解除危机事件挂接（原危机 #${oldCrisisId}）`) +
+      (detachedWoId ? `；原采纳回写工单 #${detachedWoId}（属旧危机）引用已解除` : '') +
+      (s.resolved_alert_count ? '；采纳联动解除的预警维持原危机解除态，计数不随迁' : ''),
+      actor.user, 'internal')
+    // 新危机时间线（带门户锚点，随提交后续改挂继续随迁）
+    if (crisisId) {
+      addDispatchLikeTimeline(crisisId, s.is_urgent ? '外部反馈升级' : '外部反馈提交',
+        `${who}${s.is_urgent ? '紧急' : ''}提交${docLabel}「${s.title}」（${s.code}，${oldCrisisId ? `自危机 #${oldCrisisId} 改挂` : '内部核实后补挂'}）`,
+        id, ts)
+    }
+    db.exec('COMMIT')
+  } catch (e) {
+    try { db.exec('ROLLBACK') } catch { /* 已回滚 */ }
+    throw e
   }
-  return { ok: true, crisisId }
+  return { ok: true, crisisId, movedTimeline, movedTasks, detachedWorkOrder: detachedWoId }
 }
 
 // 带门户锚点的危机时间线写入（ref_type='ext'，看板时间线可点击直达门户详情）

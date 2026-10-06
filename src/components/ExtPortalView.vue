@@ -101,7 +101,7 @@
             <button v-if="['pending','reviewing','rejected'].includes(s.status) && isAdmin" class="op accept" @click="openAccept(s)">✔ 审核采纳</button>
             <button v-if="['pending','reviewing','rejected'].includes(s.status) && isAdmin" class="op reject" @click="openReject(s)">↩ 驳回</button>
             <button v-if="!s.crisis_id && s.status!=='withdrawn'" class="op bind" @click="openBind(s)">🔗 挂接危机</button>
-            <button v-if="s.crisis_id && ['pending','reviewing','rejected'].includes(s.status)" class="op bind" @click="openBind(s)">改挂危机</button>
+            <button v-if="s.crisis_id && s.status!=='withdrawn'" class="op bind" @click="openBind(s)">改挂危机</button>
           </template>
           <button class="op logbtn" @click="toggleLogs(s)">{{ openId===s.id ? '收起留痕' : '🧾 协作留痕' }}</button>
         </div>
@@ -158,6 +158,9 @@
           <option :value="null">解除挂接（通用线索）</option>
           <option v-for="c in openCrises" :key="c.id" :value="c.id">#{{ c.id }} {{ c.title }}</option>
         </select>
+        <p v-if="bindForm.crisis_id && bindCrisisId!==bindForm.crisis_id" class="bind-hint">
+          <template v-if="bindCrisisId">改挂后：该提交的危机时间线记录随迁至新危机</template><template v-else>解除挂接后：提交转为通用线索，时间线记录留存于原危机</template><template v-if="bindForm.work_order_id">；原采纳回写的工单 #{{ bindForm.work_order_id }} 属旧危机，引用将解除（留痕保留）</template><template v-if="bindForm.resolved_alert_count">；采纳联动解除的 {{ bindForm.resolved_alert_count }} 条预警留在旧危机（维持解除，计数不随迁）</template>。
+        </p>
         <div class="modal-ops">
           <button class="save" @click="confirmBind">保存</button>
           <button class="ghost" @click="bindForm=null">取消</button>
@@ -381,6 +384,7 @@ onUnmounted(() => { clearInterval(timer); store.extFilterCrisis = null; store.ex
 .modal{background:#0f1d38;border:1px solid rgba(120,160,220,0.3);border-radius:14px;padding:20px;width:560px;max-width:100%;display:flex;flex-direction:column;gap:10px;}
 .modal h4{margin:0;font-size:15px;}
 .modal-hint{margin:0;font-size:12px;color:#8ba2c8;line-height:1.6;}
+.bind-hint{margin:0;font-size:12px;color:#ffcc80;line-height:1.6;background:#2a1f10;border:1px solid rgba(255,204,128,.25);border-radius:8px;padding:8px 10px;}
 .modal label{font-size:12px;color:#aebadd;}
 .modal select,.modal textarea{background:#13233f;border:1px solid rgba(120,160,220,0.25);color:#dbe4f3;border-radius:8px;padding:9px 11px;font-size:13px;font-family:inherit;}
 .modal textarea{min-height:90px;resize:vertical;}
