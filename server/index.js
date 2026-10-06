@@ -54,7 +54,7 @@ import {
   portalBootstrap, partnerOf, bindPortalNotify, getSubmissionForPartner,
   createSubmission, supplementSubmission, withdrawSubmission,
   receiveSubmission, acceptSubmission, rejectSubmission, bindSubmissionCrisis,
-  detachSubmissionsOfCrisis
+  detachSubmissionsOfCrisis, healSubmissionCrisisLinks
 } from './portal.js'
 import { closureReadiness, closeCrisis, reopenCrisis } from './closures.js'
 
@@ -75,6 +75,11 @@ if (seededNotify) console.log(`[NOTIFY] 为存量未解除预警生成 ${seededN
 const healedNotify = healNotifySourceLinks()
 if (healedNotify.healed || healedNotify.orphanDeleted) {
   console.log(`[NOTIFY] 升级链来源修复：补齐 ${healedNotify.healed} 条任务来源，清理 ${healedNotify.orphanDeleted} 条孤儿任务`)
+}
+// 外部提交危机归属修复（幂等）：旧版改挂只改提交归属，遗留的时间线锚点/通知任务/采纳工单串案按统一口径归位
+const healedExt = healSubmissionCrisisLinks()
+if (healedExt.submissionsFixed || healedExt.timelineMoved || healedExt.tasksRepointed) {
+  console.log(`[PORTAL] 外部提交串案修复：校正 ${healedExt.submissionsFixed} 条提交归属，归位 ${healedExt.timelineMoved} 条时间线锚点、${healedExt.tasksRepointed} 条通知任务`)
 }
 startScheduler()
 // 采集调度：运行中的采集任务随服务启动按游标自动接续（不丢不重）

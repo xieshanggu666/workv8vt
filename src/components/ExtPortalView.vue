@@ -154,6 +154,7 @@
     <div v-if="bindForm" class="modal-mask" @click.self="bindForm=null">
       <div class="modal">
         <h4>🔗 挂接危机事件 · {{ bindForm.code }}</h4>
+        <p class="modal-hint">改挂后，该提交在危机时间线的记录与关联通知任务将整体迁移到新事件，并在新旧事件各留一条交接记录；解除挂接则转回通用线索池。</p>
         <select v-model.number="bindCrisisId">
           <option :value="null">解除挂接（通用线索）</option>
           <option v-for="c in openCrises" :key="c.id" :value="c.id">#{{ c.id }} {{ c.title }}</option>

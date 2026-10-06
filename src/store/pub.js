@@ -366,7 +366,9 @@ export const usePubStore = defineStore('pub', {
     async bindExtCrisis(id, crisis_id) {
       const r = await api(`/ext-submissions/${id}/crisis`, 'POST', { crisis_id })
       await this.load()
-      this.msg(crisis_id ? `已挂接危机 #${crisis_id}` : '已解除危机挂接', 'success')
+      if (r.unchanged) this.msg('挂接危机未变化', 'info')
+      else if (crisis_id) this.msg(`已挂接危机 #${crisis_id}（随迁时间线 ${r.movedTimeline ?? 0} 条、通知任务 ${r.repointedTasks ?? 0} 条）`, 'success')
+      else this.msg(`已解除危机挂接（移出时间线 ${r.movedTimeline ?? 0} 条、通知任务 ${r.repointedTasks ?? 0} 条）`, 'success')
       return r
     },
     // ===== 外部协作门户（协作方口令鉴权） =====

@@ -273,7 +273,8 @@ function corrShort(c) {
 function logActionText(a) {
   return {
     created: '生成', sent: '发送成功', retry: '待重试', failed: '发送失败',
-    paused: '暂停', resumed: '恢复', acked: '确认回执', escalated: '升级', cancelled: '取消'
+    paused: '暂停', resumed: '恢复', acked: '确认回执', escalated: '升级', cancelled: '取消',
+    rebind: '改挂归属'
   }[a] || a
 }
 function subDesc(s) {
